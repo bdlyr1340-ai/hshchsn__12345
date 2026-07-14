@@ -1,22 +1,14 @@
-FROM python:3.10-slim
+# استخدام الصورة الرسمية من مايكروسوفت المجهزة بكل اعتمادات Playwright ومتصفح Firefox مسبقاً
+FROM mcr.microsoft.com/playwright/python:v1.41.0-jammy
 
 WORKDIR /app
 
-# تحديث النظام وتثبيت المتطلبات الأساسية
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    && rm -rf /var/lib/apt/lists/*
-
-# نسخ ملف المكتبات وتثبيتها
+# نسخ وتثبيت مكتبات بايثون فقط
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# تثبيت المتصفحات وتثبيت حزم النظام التابعة لها تلقائياً (install-deps)
-RUN playwright install firefox
-RUN playwright install-deps
-
-# نسخ بقية ملفات المشروع
+# نسخ بقية ملفات المشروع للداخل
 COPY . .
 
+# تشغيل البوت مباشرة
 CMD ["python", "bot.py"]
