@@ -16,8 +16,10 @@ SAMESITE_MAP = {
     'strict': 'Strict',
     'lax': 'Lax',
     'no_restriction': 'None',
+    'none': 'None',
     None: 'Lax',
-    'unspecified': 'Lax'
+    'unspecified': 'Lax',
+    '': 'Lax'
 }
 
 def prepare_cookies(raw_cookies):
@@ -31,7 +33,8 @@ def prepare_cookies(raw_cookies):
             'expires': c.get('expirationDate'),
             'httpOnly': c.get('httpOnly', False),
             'secure': c.get('secure', False),
-            'sameSite': SAMESITE_MAP.get(c.get('sameSite', '').lower(), 'Lax')
+            # التعديل الجذري هنا لمنع الكراش من الـ null
+            'sameSite': SAMESITE_MAP.get(str(c.get('sameSite') or '').lower(), 'Lax')
         }
         cookies.append(cookie)
     return cookies
