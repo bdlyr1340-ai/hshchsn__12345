@@ -6,7 +6,7 @@ import logging
 import sys
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from camoufox import launch, BrowserType
+from camoufox import Camoufox  # ✅ الاستيراد الصحيح
 
 # -------------------- إعداد السجل --------------------
 logging.basicConfig(
@@ -51,23 +51,17 @@ if not TOKEN:
     logger.error("TELEGRAM_BOT_TOKEN غير مضبوط")
     sys.exit(1)
 
-MAX_PROFILES = 5  # الحد الأقصى للملفات الشخصية في Netflix
+MAX_PROFILES = 5
 
-# -------------------- المتصفح العام --------------------
-browser = None
-
+# -------------------- دوال البوت --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("مرحباً! أرسل لي البريد الإلكتروني الذي تريد إنشاء جلسة Netflix له.")
 
 def is_valid_email(email):
     return re.match(r"[^@]+@[^@]+\.[^@]+", email)
 
-# -------------------- دالة إنشاء الجلسة --------------------
-async def create_netflix_session(email: str) -> tuple[str, bytes | None]:
-    """
-    تعيد (رابط_الدخول, لقطة_الشاشة_للخطأ)
-    إذا حدث خطأ تعيد (None, screenshot_bytes)
-    """
+async def create_netflix_session(email: str, browser) -> tuple[str, bytes | None]:
+    """تأخذ المتصفح كوسيط لإنشاء سياق جديد في كل مرة"""
     context = await browser.new_context()
     await context.add_cookies(PLAYWRIGHT_COOKIES)
     page = await context.new_page()
@@ -77,7 +71,6 @@ async def create_netflix_session(email: str) -> tuple[str, bytes | None]:
         
         # 1. الذهاب إلى إدارة الملفات الشخصية
         await page.goto('https://www.netflix.com/ManageProfiles', wait_until='domcontentloaded')
-        # إذا تم توجيهنا إلى صفحة الدخول، الكوكيز منتهية
         if "login" in page.url:
             raise Exception("الكوكيز غير صالحة - تم التحويل إلى صفحة تسجيل الدخول.")
 
@@ -89,12 +82,11 @@ async def create_netflix_session(email: str) -> tuple[str, bytes | None]:
         if current_count >= MAX_PROFILES:
             raise Exception(f"الحساب ممتلئ ({MAX_PROFILES} ملفات شخصية). يجب حذف ملف قبل الإضافة.")
 
-        # 3. الضغط على "Add Profile"
+        # 3. إضافة ملف شخصي
         add_profile_btn = page.get_by_role('link', name='Add Profile')
         if not await add_profile_btn.is_visible():
             add_profile_btn = page.locator('a:has-text("Add Profile"), button:has-text("Add Profile")')
             if await add_profile_btn.count() == 0:
-                # ربما يكون الزر مخفياً أو تم تغيير التصميم
                 await page.screenshot(path='error_add_profile.png')
                 with open('error_add_profile.png', 'rb') as f:
                     screenshot = f.read()
@@ -102,8 +94,8 @@ async def create_netflix_session(email: str) -> tuple[str, bytes | None]:
         await add_profile_btn.click()
         await page.wait_for_load_state('networkidle')
 
-        # 4. تعبئة اسم البروفايل
-        profile_name = email.split('@')[0][:20]  # مقطع أول 20 حرف
+        # 4. تعبئة الاسم
+        profile_name = email.split('@')[0][:20]
         name_input = page.locator('input[name="profileName"]')
         await name_input.fill(profile_name)
 
@@ -113,9 +105,8 @@ async def create_netflix_session(email: str) -> tuple[str, bytes | None]:
         await save_btn.click()
         await page.wait_for_load_state('networkidle')
 
-        # 5. الذهاب إلى حساب Netflix واستخراج رابط الدخول
+        # 5. استخراج رابط الدخول
         await page.goto('https://www.netflix.com/account', wait_until='networkidle')
-        # بعض الحسابات قد لا تملك خيار "Get a sign-in link"
         get_link_btn = page.get_by_text('Get a sign-in link')
         if not await get_link_btn.is_visible():
             get_link_btn = page.locator('button:has-text("Get a sign-in link")')
@@ -132,7 +123,6 @@ async def create_netflix_session(email: str) -> tuple[str, bytes | None]:
     except Exception as e:
         logger.exception("خطأ أثناء create_netflix_session")
         if screenshot is None:
-            # نلتقط لقطة أخيرة للصفحة إن أمكن
             try:
                 await page.screenshot(path='error_screenshot.png')
                 with open('error_screenshot.png', 'rb') as f:
@@ -143,23 +133,25 @@ async def create_netflix_session(email: str) -> tuple[str, bytes | None]:
     finally:
         await context.close()
 
-# -------------------- معالج الرسائل --------------------
 async def handle_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     email = update.message.text.strip()
     if not is_valid_email(email):
         await update.message.reply_text("❌ يرجى إرسال بريد إلكتروني صالح.")
         return
 
+    browser = context.bot_data.get('browser')
+    if not browser:
+        await update.message.reply_text("⚠️ المتصفح غير جاهز، يرجى الانتظار قليلاً.")
+        return
+
     wait_msg = await update.message.reply_text(f"⏳ جاري معالجة البريد: {email}...")
     try:
-        link, screenshot = await create_netflix_session(email)
+        link, screenshot = await create_netflix_session(email, browser)
         if link:
             await wait_msg.edit_text(f"✅ تم إنشاء الجلسة! رابط الدخول:\n{link}")
         else:
-            # حدث خطأ
             error_text = "❌ فشلت العملية. راجع السجلات لمعرفة السبب."
             if screenshot:
-                # أرسل لقطة الشاشة للمستخدم لتحليلها
                 await update.message.reply_photo(photo=screenshot, caption="لقطة من المتصفح عند حدوث الخطأ:")
                 error_text += "\nتم إرسال لقطة الشاشة أعلاه، قد تفيد في التشخيص."
             await wait_msg.edit_text(error_text)
@@ -168,33 +160,28 @@ async def handle_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await wait_msg.edit_text("❌ حدث خطأ داخلي، حاول لاحقاً.")
 
 # -------------------- بدء التشغيل --------------------
-async def post_shutdown(app):
-    global browser
-    if browser:
-        await browser.close()
-        logger.info("المتصفح أغلق")
-
 async def main():
-    global browser
-    # استخدام Chromium بشكل صريح
-    browser = await launch(headless=True, browser=BrowserType.CHROMIUM)
-    logger.info("Camoufox يعمل بنجاح مع Chromium")
+    # ✅ تشغيل المتصفح الخفي عبر Camoufox
+    async with Camoufox(headless=True, browser="chromium") as browser:
+        logger.info("Camoufox يعمل بنجاح مع Chromium")
 
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email))
-    app.post_shutdown = post_shutdown
+        # حفظ المتصفح لاستخدامه في ال handlers
+        app = Application.builder().token(TOKEN).build()
+        app.bot_data['browser'] = browser
 
-    webhook_url = os.environ.get('WEBHOOK_URL')
-    if webhook_url:
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get('PORT', 8443)),
-            webhook_url=webhook_url
-        )
-    else:
-        logger.info("تشغيل بالاستطلاع...")
-        await app.run_polling()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email))
+
+        webhook_url = os.environ.get('WEBHOOK_URL')
+        if webhook_url:
+            await app.run_webhook(
+                listen="0.0.0.0",
+                port=int(os.environ.get('PORT', 8443)),
+                webhook_url=webhook_url
+            )
+        else:
+            logger.info("تشغيل بالاستطلاع...")
+            await app.run_polling()
 
 if __name__ == '__main__':
     asyncio.run(main())
