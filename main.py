@@ -5,7 +5,7 @@ import re
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from camoufox.async_api import AsyncCamoufox  # <--- التعديل الأول صار هنا
+from camoufox.async_api import AsyncCamoufox
 
 # تحميل الكوكيز
 with open('cookies.json', 'r') as f:
@@ -45,6 +45,7 @@ if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN غير موجود")
 
 browser = None
+camoufox_cm = None  # نحتفظ بالمتصفح حتى نكدر نسده براحتنا
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -106,32 +107,36 @@ async def create_netflix_session(email):
     finally:
         await context.close()
 
-async def post_shutdown(app):
-    global browser
-    if browser:
-        await browser.close()
+# هنا دالة تشتغل أول ما يشتغل البوت (نفتح بيها المتصفح)
+async def post_init(app: Application):
+    global browser, camoufox_cm
+    camoufox_cm = AsyncCamoufox(headless=True)
+    browser = await camoufox_cm.__aenter__()
+    logger.info("Camoufox يعمل الآن بنجاح")
+
+# وهنا دالة تشتغل من يطفى البوت (نسد بيها المتصفح)
+async def post_shutdown(app: Application):
+    global camoufox_cm
+    if camoufox_cm:
+        await camoufox_cm.__aexit__(None, None, None)
         logger.info("المتصفح أغلق")
 
-async def main():
-    global browser
-    # <--- التعديل الثاني صار هنا
-    browser = await AsyncCamoufox(headless=True)
-    logger.info("Camoufox يعمل")
-
-    app = Application.builder().token(TOKEN).build()
+def main():
+    # بناء البوت وربطه بدوال التشغيل والإغلاق
+    app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email))
-    app.post_shutdown = post_shutdown
 
     webhook_url = os.environ.get('WEBHOOK_URL')
     if webhook_url:
-        await app.run_webhook(
+        app.run_webhook(
             listen="0.0.0.0",
             port=int(os.environ.get('PORT', 8443)),
             webhook_url=webhook_url
         )
     else:
-        await app.run_polling()
+        app.run_polling()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
