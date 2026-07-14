@@ -62,21 +62,24 @@ async def handle_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(f"جاري معالجة البريد: {email}...")
     try:
-        link = await create_netflix_session(email)
+        # نمرر الـ Bot Instance هنا حتى يدزلك لقطة شاشة إذا فشلت العملية
+        link = await create_netflix_session(email, context.bot)
         await update.message.reply_text(f"تم إنشاء الجلسة! رابط الدخول:\n{link}")
     except Exception as e:
         logger.exception("فشل إنشاء الجلسة")
         await update.message.reply_text("حدث خطأ أثناء إنشاء الجلسة، حاول مجدداً لاحقاً.")
 
-async def create_netflix_session(email):
+async def create_netflix_session(email, bot_instance=None):
     context = await browser.new_context()
     await context.add_cookies(PLAYWRIGHT_COOKIES)
     page = await context.new_page()
     try:
         profile_name = email.split('@')[0]
         await page.goto('https://www.netflix.com/ManageProfiles', wait_until='networkidle')
+        
+        # إذا تحولنا لصفحة الدخول، معناها الكوكيز انتهت صلاحيتها أو تطردت
         if "login" in page.url:
-            raise Exception("الكوكيز غير صالحة - تم التحويل لصفحة الدخول")
+            raise Exception("الكوكيز غير صالحة - تم تحويل المتصفح لصفحة تسجيل الدخول.")
         
         add_profile_btn = page.get_by_role('link', name='Add Profile')
         if not await add_profile_btn.is_visible():
@@ -102,19 +105,36 @@ async def create_netflix_session(email):
         await link_input.wait_for(state='visible', timeout=10000)
         signin_link = await link_input.input_value()
         if not signin_link or not signin_link.startswith('http'):
-            raise Exception("لم يتم العثور على رابط الدخول")
+            raise Exception("لم يتم العثور على رابط الدخول المباشر.")
         return signin_link
+        
+    except Exception as e:
+        # الميزة الأسطورية: التقاط صورة وإرسالها للمطور عند حدوث خطأ
+        try:
+            screenshot_path = "error_screenshot.png"
+            await page.screenshot(path=screenshot_path)
+            admin_id = os.environ.get('ADMIN_ID')
+            if admin_id and bot_instance:
+                with open(screenshot_path, 'rb') as photo:
+                    await bot_instance.send_photo(
+                        chat_id=admin_id,
+                        photo=photo,
+                        caption=f"❌ **فشلت عملية إنشاء الجلسة!**\n\n**الإيميل المطلوب:** `{email}`\n**نوع الخطأ:** `{str(e)}`"
+                    )
+            if os.path.exists(screenshot_path):
+                os.remove(screenshot_path)
+        except Exception as screenshot_err:
+            logger.error(f"فشل التقاط لقطة الشاشة: {screenshot_err}")
+        raise e
     finally:
         await context.close()
 
-# هنا دالة تشتغل أول ما يشتغل البوت (نفتح بيها المتصفح)
 async def post_init(app: Application):
     global browser, camoufox_cm
     camoufox_cm = AsyncCamoufox(headless=True)
     browser = await camoufox_cm.__aenter__()
     logger.info("Camoufox يعمل الآن بنجاح")
 
-# وهنا دالة تشتغل من يطفى البوت (نسد بيها المتصفح)
 async def post_shutdown(app: Application):
     global camoufox_cm
     if camoufox_cm:
@@ -122,7 +142,6 @@ async def post_shutdown(app: Application):
         logger.info("المتصفح أغلق")
 
 def main():
-    # بناء البوت وربطه بدوال التشغيل والإغلاق
     app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     
     app.add_handler(CommandHandler("start", start))
