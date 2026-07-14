@@ -28,7 +28,8 @@
     {
         "domain": ".netflix.com",
         "expirationDate": 1783740185.228777,
-        "hostOnly": true,
+        "hostOnly": false,
+        "httpOnly": true,
         "name": "gsid",
         "path": "/",
         "sameSite": "no_restriction",
