@@ -1,25 +1,39 @@
 FROM python:3.10-slim
 
-# منع فقدان السجلات
-ENV PYTHONUNBUFFERED=1
-
-# تثبيت مكتبات النظام اللازمة لتشغيل المتصفح
+# تثبيت متطلبات النظام لتشغيل متصفح Firefox ومكتبة Playwright
 RUN apt-get update && apt-get install -y \
-    libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
-    libxcomposite1 libxdamage1 libxrandr2 libgbm1 libasound2 \
+    wget \
+    gnupg \
+    libglib2.0-0 \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libxcb1 \
+    libxkbcommon0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    librandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# تثبيت مكتبات بايثون أولاً (لتسريع البناء)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# تثبيت متصفح Chromium الخاص بـ Playwright مباشرة للنظام (مهم جداً لـ Railway)
-RUN playwright install chromium
+# تحميل متصفح Playwright ومتصفح Camoufox المخصص
+RUN playwright install firefox
+RUN camoufox fetch
 
-# نسخ بقية ملفات المشروع
 COPY . .
 
-# الأمر لتشغيل البوت (تأكد أن ملفك الرئيسي يسمى main.py)
-CMD ["python", "main.py"]
+CMD ["python", "bot.py"]
