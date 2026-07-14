@@ -1,17 +1,15 @@
 import os
 import json
 import telebot
-from telebot import types
-from camoufox.sync_api import Camoufox
+from playwright.sync_api import sync_playwright
 
-# احصل على توكن البوت من بيئة التشغيل (سيتم ضبطه في Railway)
+# احصل على توكن البوت من بيئة التشغيل
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
-# قاموس لحفظ بيانات المستخدمين مؤقتاً أثناء المحادثة
+# قاموس لحفظ بيانات المستخدمين مؤقتاً
 user_data = {}
 
-# حالات المستخدم
 STATE_WAITING_FOR_COOKIES = "WAITING_FOR_COOKIES"
 STATE_WAITING_FOR_EMAIL = "WAITING_FOR_EMAIL"
 
@@ -21,8 +19,8 @@ def send_welcome(message):
     user_data[chat_id] = {}
     
     welcome_text = (
-        "👋 أهلاً بك يا صديقي في بوت تسجيل دخول Netflix الذكي!\n\n"
-        "📥 الخطوة الأولى: يرجى إرسال ملف **الكوكيز (Cookies)** الخاص بحساب Netflix بصيغة JSON."
+        "👋 أهلاً بك يا صديقي في بوت تسجيل دخول Netflix المطور!\n\n"
+        "📥 **الخطوة الأولى:** يرجى إرسال ملف **الكوكيز (Cookies)** الخاص بالحساب بصيغة JSON."
     )
     bot.send_message(chat_id, welcome_text, parse_mode="Markdown")
     user_data[chat_id]['state'] = STATE_WAITING_FOR_COOKIES
@@ -33,17 +31,17 @@ def handle_cookies(message):
     text = message.text.strip()
     
     try:
-        # محاولة التحقق من صحة صيغة الـ JSON للكوكيز
+        # التحقق من صحة الكوكيز
         cookies = json.loads(text)
         if not isinstance(cookies, list):
-            raise ValueError("الكوكيز يجب أن تكون على شكل قائمة (List)")
+            raise ValueError("يجب أن تكون الكوكيز عبارة عن قائمة JSON.")
             
         user_data[chat_id]['cookies'] = cookies
         user_data[chat_id]['state'] = STATE_WAITING_FOR_EMAIL
         
-        bot.send_message(chat_id, "✅ تم حفظ الكوكيز بنجاح!\n\n📧 الآن، يرجى إرسال **الإيميل** المرتبط بالحساب للبدء في عملية تسجيل الدخول.")
+        bot.send_message(chat_id, "✅ تم حفظ الكوكيز بنجاح!\n\n📧 الآن، يرجى إرسال **الإيميل** الخاص بالحساب لتسجيل الدخول.")
     except Exception as e:
-        bot.send_message(chat_id, f"❌ صيغة الكوكيز غير صحيحة. يرجى التأكد من نسخ كود JSON بالكامل وإعادة إرساله.\nالخطأ: {str(e)}")
+        bot.send_message(chat_id, f"❌ صيغة الكوكيز غير صحيحة. تأكد من نسخ النص بالكامل.\nالخطأ: {str(e)}")
 
 @bot.message_handler(func=lambda message: user_data.get(message.chat.id, {}).get('state') == STATE_WAITING_FOR_EMAIL)
 def handle_email(message):
@@ -52,24 +50,29 @@ def handle_email(message):
     
     cookies = user_data[chat_id].get('cookies')
     if not cookies:
-        bot.send_message(chat_id, "❌ حدث خطأ، لم نجد الكوكيز الخاصة بك. يرجى إرسال /start من جديد.")
+        bot.send_message(chat_id, "❌ حدث خطأ، يرجى إرسال /start للبدء من جديد.")
         return
 
-    status_msg = bot.send_message(chat_id, "⏳ جاري تشغيل المتصفح الآمن (Camoufox) والاتصال بـ Netflix...")
+    status_msg = bot.send_message(chat_id, "⏳ جاري تشغيل المتصفح الآمن وفحص الحساب...")
 
     try:
-        # تشغيل متصفح Camoufox المخفي لتخطي الحماية
-        with Camoufox(headless=True) as browser:
-            # إنشاء سياق متصفح جديد وضبط الكوكيز داخله
-            context = browser.new_context()
+        with sync_playwright() as p:
+            # تشغيل متصفح فايرفوكس بإعدادات تخفي ممتازة
+            browser = p.firefox.launch(headless=True)
             
-            # تعديل نطاق الكوكيز ليتناسب مع صيغة Playwright
+            # محاكاة جهاز حقيقي لتخطي أنظمة الحماية
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
+                viewport={"width": 1280, "height": 720}
+            )
+            
+            # تهيئة وتصفية الكوكيز
             formatted_cookies = []
             for c in cookies:
                 formatted_cookies.append({
                     "name": c.get("name"),
                     "value": c.get("value"),
-                    "domain": c.get("domain"),
+                    "domain": c.get("domain") if c.get("domain").startswith(".") else f".{c.get('domain')}",
                     "path": c.get("path", "/"),
                     "secure": c.get("secure", True),
                     "httpOnly": c.get("httpOnly", False)
@@ -78,33 +81,34 @@ def handle_email(message):
             context.add_cookies(formatted_cookies)
             page = context.new_page()
             
-            # التوجه مباشرة لصفحة الحساب في نتفلكس للتأكد من نجاح الدخول
-            page.goto("https://www.netflix.com/YourAccount", wait_until="networkidle")
+            # الدخول لـ Netflix
+            page.goto("https://www.netflix.com/YourAccount", timeout=60000, wait_until="load")
             
-            # التحقق إذا كنا داخل الصفحة الشخصية أو تم رفض الجلسة
             current_url = page.url
             if "YourAccount" in current_url or "browse" in current_url:
-                # توليد رابط الجلسة المباشر أو تأكيد النجاح
                 bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=status_msg.message_id,
-                    text=f"🎉 **اكتمل تسجيل الدخول بنجاح!**\n\n📧 الحساب: `{email}`\n🌐 الرابط النشط: {current_url}\n\nتم التحقق من الجلسة وتخطي جدار الحماية بنجاح.",
+                    text=f"🎉 **اكتمل تسجيل الدخول بنجاح!**\n\n📧 الحساب: `{email}`\n🌐 رابط الجلسة النشط: {current_url}\n\nجاهز للاستخدام الآن.",
                     parse_mode="Markdown"
                 )
             else:
                 bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=status_msg.message_id,
-                    text="⚠️ فشل تسجيل الدخول المباشر. قد تكون الكوكيز منتهية الصلاحية أو غير مطابقة للحساب."
+                    text="⚠️ فشل تسجيل الدخول. قد تكون الكوكيز قديمة أو غير صالحة."
                 )
+            browser.close()
                 
     except Exception as e:
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=status_msg.message_id,
-            text=f"❌ حدث خطأ أثناء محاولة الدخول الآمن:\n`{str(e)}`",
+            text=f"❌ حدث خطأ أثناء الاتصال بالخادم:\n`{str(e)}`",
             parse_mode="Markdown"
         )
     finally:
-        # تصفير حالة المستخدم للبدء من جديد عند الحاجة
         user_data[chat_id] = {}
+
+# بدء تشغيل البوت واستقبال الرسائل بشكل مستمر
+bot.infinity_polling()
