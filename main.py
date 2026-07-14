@@ -5,7 +5,7 @@ import re
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import camoufox
+from camoufox.async_api import AsyncCamoufox  # <--- التعديل الأول صار هنا
 
 # تحميل الكوكيز
 with open('cookies.json', 'r') as f:
@@ -33,7 +33,6 @@ def prepare_cookies(raw_cookies):
             'expires': c.get('expirationDate'),
             'httpOnly': c.get('httpOnly', False),
             'secure': c.get('secure', False),
-            # التعديل الجذري هنا لمنع الكراش من الـ null
             'sameSite': SAMESITE_MAP.get(str(c.get('sameSite') or '').lower(), 'Lax')
         }
         cookies.append(cookie)
@@ -73,13 +72,11 @@ async def create_netflix_session(email):
     await context.add_cookies(PLAYWRIGHT_COOKIES)
     page = await context.new_page()
     try:
-        # إنشاء بروفايل جديد باسم مختصر من الإيميل
         profile_name = email.split('@')[0]
         await page.goto('https://www.netflix.com/ManageProfiles', wait_until='networkidle')
         if "login" in page.url:
             raise Exception("الكوكيز غير صالحة - تم التحويل لصفحة الدخول")
         
-        # الضغط على Add Profile
         add_profile_btn = page.get_by_role('link', name='Add Profile')
         if not await add_profile_btn.is_visible():
             add_profile_btn = page.get_by_text('Add Profile')
@@ -94,7 +91,6 @@ async def create_netflix_session(email):
         await save_btn.click()
         await page.wait_for_load_state('networkidle')
 
-        # استخراج رابط الدخول المباشر
         await page.goto('https://www.netflix.com/account', wait_until='networkidle')
         get_link_btn = page.get_by_text('Get a sign-in link')
         if not await get_link_btn.is_visible():
@@ -118,7 +114,8 @@ async def post_shutdown(app):
 
 async def main():
     global browser
-    browser = await camoufox.launch(headless=True)
+    # <--- التعديل الثاني صار هنا
+    browser = await AsyncCamoufox(headless=True)
     logger.info("Camoufox يعمل")
 
     app = Application.builder().token(TOKEN).build()
@@ -126,7 +123,6 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email))
     app.post_shutdown = post_shutdown
 
-    # استخدم ويبهوك إذا وُجد المتغير، وإلا استخدم بولينغ (الأسهل للنشر)
     webhook_url = os.environ.get('WEBHOOK_URL')
     if webhook_url:
         await app.run_webhook(
