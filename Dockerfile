@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# تثبيت متطلبات النظام لتشغيل متصفح Firefox ومكتبة Playwright
+# تثبيت متطلبات النظام الصحيحة لتشغيل متصفح Firefox ومكتبة Playwright
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
     libxdamage1 \
     libxext6 \
     libxfixes3 \
-    librandr2 \
+    libxrandr2 \
     libgbm1 \
     libpango-1.0-0 \
     libcairo2 \
