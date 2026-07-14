@@ -1,14 +1,26 @@
-# استخدام الصورة الرسمية من مايكروسوفت المجهزة بكل اعتمادات Playwright ومتصفح Firefox مسبقاً
-FROM mcr.microsoft.com/playwright/python:v1.41.0-jammy
+FROM python:3.10-slim
+
+# تثبيت dependencies لمتصفح كروم
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# نسخ وتثبيت مكتبات بايثون فقط
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# نسخ بقية ملفات المشروع للداخل
 COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install chromium
+RUN playwright install-deps chromium
 
-# تشغيل البوت مباشرة
-CMD ["python", "bot.py"]
+CMD ["python", "main.py"]
