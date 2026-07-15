@@ -3,13 +3,13 @@ import time
 import random
 import string
 import logging
-from selenium import webdriver
+
+# استدعاء Camoufox الخاص بيك
+from camoufox.selenium import KeepAliveWebDriver 
+
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from email_generator import create_temp_email
 
 # تفعيل السجلات
@@ -24,24 +24,17 @@ CLEAR_COOKIES_URL = os.getenv("CLEAR_COOKIES_URL", "http://netflix.com/clearcook
 
 def get_netflix_30day_offer():
     """يحاول الحصول على عرض Netflix لمدة 30 يوم وإنشاء حساب."""
-    options = Options()
-    if BROWSER_HEADLESS:
-        options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
     
-    # استخدام webdriver-manager لتثبيت chromedriver تلقائياً
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    # إعدادات Camoufox
+    options = {
+        "headless": BROWSER_HEADLESS, # ياخذ القيمة من المتغيرات حتى يشتغل مخفي بالسيرفر
+        "block_images": True, # لتسريع التصفح
+    }
     
     attempt = 0
     
-    try:
+    # تشغيل متصفح Camoufox
+    with KeepAliveWebDriver(**options) as driver:
         while attempt < MAX_ATTEMPTS:
             try:
                 # مسح الكوكيز
@@ -80,9 +73,8 @@ def get_netflix_30day_offer():
                 logging.error(f"خطأ في المحاولة {attempt}: {str(e)}")
                 attempt += 1
                 time.sleep(5)
-    finally:
-        driver.quit()
-    
+                
+    # بمجرد انتهاء المحاولات، الـ with راح تغلق المتصفح تلقائياً
     return None
 
 def complete_netflix_signup(driver, email):
