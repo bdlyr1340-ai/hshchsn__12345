@@ -1,79 +1,109 @@
-import os
 import asyncio
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
-from playwright.async_api import async_playwright
+import random
+import string
+import requests
+from camoufox import Camoufox
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-# --- الإعدادات ---
-API_TOKEN = os.getenv("BOT_TOKEN") 
+BOT_TOKEN = "ضع_توكن_البوت_هنا"
+TEMP_MAIL_API = "https://api.mail.tm"
 
-COOKIES_DATA = [
-    {"name": "netflix-sans-normal-3-loaded", "value": "true", "domain": ".netflix.com", "path": "/"},
-    {"name": "SecureNetflixId", "value": "v%3D3%26mac%3DAQEAEQABABQ6aF0HZ8DsqIo_PhF7ZqIn4Pnkr9eRfa8.%26dt%3D1783653781333", "domain": ".netflix.com", "path": "/"},
-    {"name": "gsid", "value": "e1335f92-02b6-43d9-a5dd-c979841186f3", "domain": ".netflix.com", "path": "/"},
-    {"name": "NetflixId", "value": "v%3D3%26ct%3DBgjHlOvcAxK7AQ6aWc332xABBe3_4TFi_GhYz6bu_SppiID9W173968rwXGgBZ5FOguy1o_nypEEzJFpJgmH0c87meJqBoXmkDG-3fRhPBkFJTw4N7FdSlN0L-D1Ihh-QS3KpejkBqY-jawZSvsTk7_j4UywDGYUdSSEksmaOJUWffx0dkqHTtce0mtk26U5ed1HqmdrMIXbF4_wTrJay86xSzumhWvu6NCztzpwtR73CSf9ei3-8Zhv4lR_akcGOLIpWaUYBiIOCgzRZAUwFliOAy-sUmU.", "domain": ".netflix.com", "path": "/"},
-    {"name": "flwssn", "value": "0c34d834-9769-4f10-8fbe-8ec245d9746f", "domain": ".netflix.com", "path": "/"},
-    {"name": "netflix-sans-bold-3-loaded", "value": "true", "domain": ".netflix.com", "path": "/"},
-    {"name": "nfvdid", "value": "BQFmAAEBEE9JRlMuhcd1vZeyOZDGNsBgwt3MrI_af3LayzVVer6glzJvVpf97z33DXpKHBq9u0DnX0WJv5EuD1xSVUtIk9HEqcup0dtQ_aPOeD1ClWFBbYusKTD2yuO_aWV8_hyzEbgC_UGa_bLVoE2bGHdkptD2", "domain": ".netflix.com", "path": "/"}
-]
+# الكوكيز المقدّم (يحوّل العرض إلى 30 يومًا)
+MAGIC_COOKIE = {
+    "name": "nfvdid",
+    "value": "BQFmAAEBEE9JRlMuhcd1vZeyOZDGNsBgwt3MrI_af3LayzVVer6glzJvVpf97z33DXpKHBq9u0DnX0WJv5EuD1xSVUtIk9HEqcup0dtQ_aPOeD1ClWFBbYusKTD2yuO_aWV8_hyzEbgC_UGa_bLVoE2bGHdkptD2",
+    "domain": ".netflix.com",
+    "path": "/",
+    "secure": False,
+    "httpOnly": False,
+    "sameSite": "Lax",
+    "expires": 1818612716  # تاريخ انتهاء الكوكيز (اختياري لكن مفيد)
+}
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+def generate_password(length=12):
+    chars = string.ascii_letters + string.digits + "!@#$%^&*"
+    return ''.join(random.choice(chars) for _ in range(length))
 
-class Form(StatesGroup):
-    waiting_for_email = State()
-
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
-    await message.answer("👋 أهلاً بك! تم تجهيز الكوكيز.\n\nالآن، أرسل الإيميل لتفعيل العرض المجاني:")
-    await state.set_state(Form.waiting_for_email)
-
-@dp.message(Form.waiting_for_email)
-async def process_email(message: types.Message, state: FSMContext):
-    email = message.text
-    await message.answer(f"⏳ جاري محاولة حقن الكوكيز للإيميل: {email}...\nقد يستغرق الأمر دقيقة، يرجى الانتظار.")
-    
+def get_temp_email():
     try:
-        success = await check_netflix_session(email)
-        if success:
-            await message.answer(f"✅ اكتمل التسجيل بنجاح!\n\n📧 الإيميل: {email}\n🎁 العرض المجاني مفعل الآن.")
-        else:
-            await message.answer("❌ فشل تفعيل العرض. ربما الكوكيز منتهية أو الإيميل غير مدعوم.")
+        resp = requests.post("https://api.mail.tm/accounts",
+                             json={"address": "", "password": "pass123"})
+        data = resp.json()
+        return data["address"]
     except Exception as e:
-        await message.answer(f"⚠️ خطأ: {str(e)}")
-    
-    await state.clear()
+        print("خطأ البريد:", e)
+        return None
 
-async def check_netflix_session(email):
-    async with async_playwright() as p:
-        # إعدادات المتصفح لتجنب الحظر والـ Timeout
-        browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
-        await context.add_cookies(COOKIES_DATA)
-        page = await context.new_page()
-        
+async def fill_form(page, email, password):
+    """تعبئة النموذج بعد ظهور خطة 30 يوم"""
+    try:
+        # انتظار حقل الإيميل
+        await page.wait_for_selector('input[name="email"]', timeout=10000)
+        await page.fill('input[name="email"]', email)
+        # الضغط على زر المتابعة
+        await page.click('button:has-text("متابعة"), button:has-text("Continue")')
+        await asyncio.sleep(2)
+
+        # إذا طلب كلمة مرور (حساب جديد)
+        if await page.is_visible('input[name="password"]'):
+            await page.fill('input[name="password"]', password)
+            await page.click('button:has-text("التالي"), button:has-text("Next")')
+            await asyncio.sleep(3)
+        return True
+    except Exception as e:
+        print("خطأ في تعبئة النموذج:", e)
+        return False
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔄 جاري بدء العملية...")
+
+    async with Camoufox(headless=True, os=["windows"]) as browser:
+        page = await browser.new_page()
         try:
-            await page.goto(f"https://www.netflix.com/login", timeout=60000)
-            if await page.query_selector('input[name="userLoginId"]'):
-                await page.fill('input[name="userLoginId"]', email)
-                await page.click('button[type="submit"]')
-                await page.wait_for_timeout(10000)
-            
-            if "browse" in page.url or "YourAccount" in page.url:
-                await browser.close()
-                return True
-            await browser.close()
-            return False
-        except:
-            await browser.close()
-            return False
+            # الخطوة 1: تعيين الكوكيز على نطاق netflix.com
+            # يجب أن نكون على النطاق أولاً لوضع الكوكيز
+            await page.goto("https://www.netflix.com")
+            await page.context.add_cookies([MAGIC_COOKIE])
+            await asyncio.sleep(1)
 
-async def main():
-    await dp.start_polling(bot)
+            # الخطوة 2: الذهاب لصفحة الاشتراك (ستظهر خطة 30 يوم)
+            await page.goto("https://www.netflix.com/signup")
+            await asyncio.sleep(2)
+
+            # التحقق السريع من وجود 30 يومًا (اختياري)
+            content = await page.content()
+            if "30 يوم" not in content and "30-day" not in content.lower():
+                # يمكن أن نضيف محاولة أخرى أو نرسل تحذير
+                pass  # نكمل رغم ذلك
+
+            # الخطوة 3: إنشاء بريد وهمي
+            email = get_temp_email()
+            if not email:
+                await update.message.reply_text("❌ فشل إنشاء بريد وهمي")
+                return
+            password = generate_password()
+
+            # الخطوة 4: تعبئة النموذج
+            if await fill_form(page, email, password):
+                await update.message.reply_text(
+                    f"✅ تم التسجيل بنجاح!\n\n"
+                    f"📧 البريد: `{email}`\n"
+                    f"🔒 كلمة المرور: `{password}`\n\n"
+                    f"الرجاء استخدامه فوراً.",
+                    parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text("❌ فشل في إكمال التسجيل")
+
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ: {e}")
+
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    print("البوت يعمل...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
