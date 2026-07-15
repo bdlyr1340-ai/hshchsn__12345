@@ -3,13 +3,7 @@ import time
 import random
 import string
 import logging
-
-# استدعاء Camoufox الخاص بيك
-from camoufox.selenium import KeepAliveWebDriver 
-
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from camoufox.sync_api import Camoufox
 from email_generator import create_temp_email
 
 # تفعيل السجلات
@@ -17,50 +11,49 @@ logging.basicConfig(level=logging.INFO)
 
 # إعدادات من متغيرات البيئة
 BROWSER_HEADLESS = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"
-BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "10"))
+# تحويل الثواني إلى ميلي ثانية لأن مكتبة Playwright تتعامل بالميلي ثانية
+BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "10")) * 1000 
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "10"))
 NETFLIX_URL = os.getenv("NETFLIX_URL", "https://www.netflix.com/")
 CLEAR_COOKIES_URL = os.getenv("CLEAR_COOKIES_URL", "http://netflix.com/clearcookies")
 
 def get_netflix_30day_offer():
     """يحاول الحصول على عرض Netflix لمدة 30 يوم وإنشاء حساب."""
-    
-    # إعدادات Camoufox
-    options = {
-        "headless": BROWSER_HEADLESS, # ياخذ القيمة من المتغيرات حتى يشتغل مخفي بالسيرفر
-        "block_images": True, # لتسريع التصفح
-    }
-    
     attempt = 0
     
-    # تشغيل متصفح Camoufox
-    with KeepAliveWebDriver(**options) as driver:
+    # تشغيل متصفح Camoufox بوضعية التخفي
+    with Camoufox(headless=BROWSER_HEADLESS) as browser:
+        page = browser.new_page()
+        
         while attempt < MAX_ATTEMPTS:
             try:
                 # مسح الكوكيز
-                driver.get(CLEAR_COOKIES_URL)
+                page.goto(CLEAR_COOKIES_URL)
                 time.sleep(2)
                 
                 # تعيين كوكيز محددة للعرض 30 يوم
-                driver.add_cookie({
+                page.context.add_cookies([{
                     "name": "nfvdid",
                     "value": "BQFmAAEBEE9JRlMuhcd1vZeyOZDGNsBgwt3MrI_af3LayzVVer6glzJvVpf97z33DXpKHBq9u0DnX0WJv5EuD1xSVUtIk9HEqcup0dtQ_aPOeD1ClWFBbYusKTD2yuO_aWV8_hyzEbgC_UGa_bLVoE2bGHdkptD2",
-                    "domain": ".netflix.com"
-                })
+                    "domain": ".netflix.com",
+                    "path": "/"
+                }])
                 
                 # زيارة صفحة Netflix الرئيسية
-                driver.get(NETFLIX_URL)
+                page.goto(NETFLIX_URL)
                 time.sleep(3)
                 
+                content = page.content()
+                
                 # التحقق من وجود عرض 30 يوم
-                if "30 يوم" in driver.page_source or "30 day" in driver.page_source.lower():
+                if "30 يوم" in content or "30 day" in content.lower():
                     logging.info("تم العثور على عرض 30 يوم!")
                     # إنشاء إيميل وهمي
                     email = create_temp_email()
                     
                     if email:
                         # إكمال عملية التسجيل
-                        password = complete_netflix_signup(driver, email)
+                        password = complete_netflix_signup(page, email)
                         
                         if password:
                             return {"email": email, "password": password}
@@ -74,37 +67,30 @@ def get_netflix_30day_offer():
                 attempt += 1
                 time.sleep(5)
                 
-    # بمجرد انتهاء المحاولات، الـ with راح تغلق المتصفح تلقائياً
     return None
 
-def complete_netflix_signup(driver, email):
+def complete_netflix_signup(page, email):
     """يُكمل عملية تسجيل حساب Netflix."""
     try:
         # البحث عن حقل الإيميل وإدخاله
-        email_field = WebDriverWait(driver, BROWSER_TIMEOUT).until(
-            EC.element_to_be_clickable((By.ID, "id_emailHero"))
-        )
-        email_field.send_keys(email)
+        page.wait_for_selector("#id_emailHero", timeout=BROWSER_TIMEOUT)
+        page.fill("#id_emailHero", email)
         
         # النقر على زر المتابعة
-        continue_button = driver.find_element(By.XPATH, "//button[contains(text(), 'متابعة') or contains(text(), 'Continue')]")
-        continue_button.click()
+        page.locator("//button[contains(text(), 'متابعة') or contains(text(), 'Continue')]").click()
         time.sleep(3)
         
         # التحقق من طلب كلمة المرور
-        if "password" in driver.current_url.lower() or "كلمة السر" in driver.page_source:
+        if "password" in page.url.lower() or "كلمة السر" in page.content():
             # إنشاء كلمة مرور عشوائية
             password = generate_random_password()
             
             # إدخال كلمة المرور
-            password_field = WebDriverWait(driver, BROWSER_TIMEOUT).until(
-                EC.element_to_be_clickable((By.ID, "id_password"))
-            )
-            password_field.send_keys(password)
+            page.wait_for_selector("#id_password", timeout=BROWSER_TIMEOUT)
+            page.fill("#id_password", password)
             
             # إكمال التسجيل
-            submit_button = driver.find_element(By.XPATH, "//button[contains(text(), 'بدء') or contains(text(), 'Start') or contains(text(), 'إكمال') or contains(text(), 'Complete')]")
-            submit_button.click()
+            page.locator("//button[contains(text(), 'بدء') or contains(text(), 'Start') or contains(text(), 'إكمال') or contains(text(), 'Complete')]").click()
             time.sleep(5)
             
             return password
